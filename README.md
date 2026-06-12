@@ -1,4 +1,4 @@
-# Izanami-Sophia
+# Izanami-Sophia - PROTOTYPE POC
 
 LLM-driven smart contract exploit validation — gate-first, Immunefi-focused.
 

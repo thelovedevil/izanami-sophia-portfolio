@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "izanami-sophia"
+version = "0.1.0"
+description = "LLM-augmented smart contract exploit validation with proof gate"
+requires-python = ">=3.11"
+license = "LicenseRef-Proprietary"
+
+[project.scripts]
+izanami = "izanami.cli:main"

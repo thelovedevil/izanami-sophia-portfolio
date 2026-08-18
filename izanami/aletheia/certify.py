@@ -78,6 +78,10 @@ def certify(
         result.verdict = Verdict.INVALID_PROOF
         return result
 
+    # ── Layer 1b: Net-of-baseline assertion check ──
+    if not _has_baseline_assertion(poc_source):
+        result.review.append("No net-of-baseline assertion (assertGt(balance, baseline)) detected")
+
     # ── Layer 2: Dynamic execution (forge test) ──
     forge_result = _run_forge(project_path, fork_url, fork_block, ffi)
     result.test_output = forge_result.get("output", "")
@@ -202,3 +206,58 @@ def _extract_revert_reason(output: str) -> str:
         if "revert" in line.lower() or "assertion" in line.lower():
             return line[:200]
     return "test failed (no revert reason extracted)"
+
+
+def _has_baseline_assertion(poc_source: str) -> bool:
+    """Check if PoC contains a net-of-baseline value assertion.
+
+    Looks for pattern: assertGt(X.balance, baseline) or similar.
+    This ensures vm.deal in setUp is neutralized — value must move
+    through contract interaction, not cheatcode fabrication.
+    """
+    import re
+    return bool(re.search(
+        r"assertGt\s*\([^,]+\.balance\s*,\s*baseline",
+        poc_source,
+    ))
+
+
+def adversarial_precheck(
+    poc_source: str,
+    llm_host: str = "http://127.0.0.1:8080",
+    model: str = "gemma4",
+) -> tuple[bool, str]:
+    """Adversarial precheck — cheap LLM filter before expensive forge execution.
+
+    Asks a small model: "will this PoC actually move value? why or why not?"
+    Returns (should_proceed, reasoning).
+    """
+    prompt = (
+        "Analyze this Foundry PoC. Will it actually extract value from the target contract "
+        "through legitimate contract calls (not cheatcodes)? Answer YES or NO with one sentence.\n\n"
+        f"```solidity\n{poc_source[:3000]}\n```"
+    )
+
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.1,
+        "max_tokens": 100,
+    }
+
+    try:
+        data = json.dumps(payload).encode()
+        req = urllib.request.Request(
+            f"{llm_host}/v1/chat/completions",
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            response = json.loads(resp.read())
+            content = response["choices"][0]["message"]["content"].strip()
+            should_proceed = content.upper().startswith("YES")
+            return should_proceed, content
+    except Exception as e:
+        log.warning("adversarial precheck failed: %s — proceeding", e)
+        return True, "precheck unavailable"

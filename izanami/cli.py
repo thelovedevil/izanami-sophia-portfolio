@@ -107,13 +107,26 @@ def main():
             etherscan_key=args.etherscan_key,
         )
 
-        # Build surface report from Shirohebi if available
+        # Run Kuebiko static analysis if sources are available
+        from izanami.kuebiko import analyze as kuebiko_analyze
+        from izanami.kuebiko.static import to_dict as kuebiko_to_dict
+
         surface_report = {
             "address": manifest.address,
             "proxy": manifest.proxy.kind,
             "code_addresses": manifest.code_addresses,
-            "sources_available": len(manifest.sources),
         }
+
+        if manifest.sources:
+            # Write sources to temp dir for Kuebiko
+            import tempfile
+            with tempfile.TemporaryDirectory(prefix="izanami_") as tmpdir:
+                for addr, src in manifest.sources.items():
+                    src_file = Path(tmpdir) / f"{addr}.sol"
+                    src_file.write_text(src)
+                report = kuebiko_analyze(tmpdir, use_slither=True)
+                surface_report.update(kuebiko_to_dict(report))
+                print(f"Kuebiko: {len(report.attack_surface)} surface, {len(report.unguarded_movers)} unguarded movers")
 
         # Try to get RAG context
         corpus_context = ""

@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Optional
 
 from izanami.aletheia import certify, Verdict
+from izanami.aletheia.certify import adversarial_precheck
 
 log = logging.getLogger("izanami.descent")
 
@@ -101,6 +102,21 @@ def descend(
             continue
 
         result.poc_source = poc_source
+
+        # 2b. Adversarial precheck (skip on attempt 1 — no baseline)
+        if attempt > 1:
+            should_proceed, precheck_reason = adversarial_precheck(
+                poc_source, config.llm_host, config.llm_model,
+            )
+            if not should_proceed:
+                log.info("precheck REJECTED attempt %d: %s", attempt, precheck_reason[:80])
+                feedback_history.append({
+                    "attempt": attempt,
+                    "verdict": "PRECHECK_REJECTED",
+                    "reason": precheck_reason,
+                    "instruction": "The PoC was deemed unlikely to move value. Revise the exploit logic.",
+                })
+                continue
 
         # 3. Write PoC to project and certify
         poc_path = Path(config.project_path) / "test" / "Exploit.t.sol"

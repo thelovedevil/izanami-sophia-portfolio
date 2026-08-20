@@ -43,6 +43,7 @@ class DescentConfig:
     fork_block: Optional[int] = None
     project_path: str = ""
     log_path: str = "descent_log.jsonl"
+    deepseek_api_key: str = ""  # if set, use DeepSeek API instead of local LLM
 
 
 _SYSTEM_PROMPT = """\
@@ -235,13 +236,57 @@ def _build_context(
 
 
 def _call_llm(context: str, config: DescentConfig) -> str:
-    """Call LLM to generate a PoC."""
+    """Call LLM to generate a PoC. Uses DeepSeek API if key is set, else local."""
+    messages = [
+        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "user", "content": context},
+    ]
+
+    if config.deepseek_api_key:
+        return _call_deepseek(messages, config)
+    return _call_local(messages, config)
+
+
+def _call_deepseek(messages: list, config: DescentConfig) -> str:
+    """Call DeepSeek API for PoC generation (128K ctx, good at Solidity)."""
+    payload = {
+        "model": "deepseek-chat",
+        "messages": messages,
+        "temperature": 0.4,
+        "max_tokens": 8192,
+    }
+
+    data = json.dumps(payload).encode()
+    req = urllib.request.Request(
+        "https://api.deepseek.com/chat/completions",
+        data=data,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {config.deepseek_api_key}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            response = json.loads(resp.read())
+            content = response["choices"][0]["message"]["content"]
+            usage = response.get("usage", {})
+            in_tok = usage.get("prompt_tokens", 0)
+            out_tok = usage.get("completion_tokens", 0)
+            cost = (in_tok * 0.27 + out_tok * 1.10) / 1_000_000
+            log.info("deepseek PoC gen: %d in + %d out tokens ($%.4f)", in_tok, out_tok, cost)
+            return _extract_solidity(content)
+    except Exception as e:
+        log.error("DeepSeek call failed: %s", e)
+        return ""
+
+
+def _call_local(messages: list, config: DescentConfig) -> str:
+    """Call local llama-server for PoC generation."""
     payload = {
         "model": config.llm_model,
-        "messages": [
-            {"role": "system", "content": _SYSTEM_PROMPT},
-            {"role": "user", "content": context},
-        ],
+        "messages": messages,
         "temperature": 0.7,
         "max_tokens": 4096,
     }
